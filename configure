@@ -1,0 +1,177 @@
+#!/bin/bash
+#
+# 
+# Verified SAR-BP: A verified C implementation of SAR backprojection
+# with a certified absolute error bound.
+# 
+# Version 1.0 (2015-12-04)
+# 
+# Copyright (C) 2015 Reservoir Labs Inc.
+# All rights reserved.
+# 
+# This file is free software. You can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by the
+# Free Software Foundation, either version 3 of the License (GNU GPL
+# v3), or (at your option) any later version.  A verbatim copy of the
+# GNU GPL v3 is included in gpl-3.0.txt.
+# 
+# This file is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See LICENSE for
+# more details about the use and redistribution of this file and the
+# whole Verified SAR-BP library.
+# 
+# This work is sponsored in part by DARPA MTO as part of the Power
+# Efficiency Revolution for Embedded Computing Technologies (PERFECT)
+# program (issued by DARPA/CMO under Contract No: HR0011-12-C-0123). The
+# views and conclusions contained in this work are those of the authors
+# and should not be interpreted as representing the official policies,
+# either expressly or implied, of the DARPA or the
+# U.S. Government. Distribution Statement "A" (Approved for Public
+# Release, Distribution Unlimited.)
+# 
+# 
+# If you are using or modifying Verified SAR-BP in your work, please
+# consider citing the following paper:
+# 
+# Tahina Ramananandro, Paul Mountcastle, Benoit Meister and Richard
+# Lethin.
+# A Unified Coq Framework for Verifying C Programs with Floating-Point
+# Computations.
+# In CPP (5th ACM/SIGPLAN conference on Certified Programs and Proofs)
+# 2016.
+# 
+# 
+# Verified SAR-BP derives from prior work listed in ACKS along with
+# their copyright and licensing information.
+# 
+# Verified SAR-BP requires third-party libraries listed in ACKS along
+# with their copyright information.
+#
+IMAGE_SIZE=
+VCFLOAT=
+
+USAGE='
+Usage: '"$0"' <options>
+
+Options:
+--vcfloat <dir>: specify the root <dir>ectory of VCFloat
+                 (absolute path is required, default is `pwd`)
+--image-size <size>: specify the <size> of the SAR image for
+                     input data bounds, where <size> is one of
+                     small    medium   large
+                     Mandatory if sar/SARBounds.v is missing
+-h: display this list of options
+--help: display this list of options
+'
+
+while [ -n "$1" ]
+do
+    arg="$1"
+    shift
+    case "$arg" in
+	(-h|--help)
+	    echo "$USAGE"
+	    exit 0
+	    ;;
+	(--vcfloat)
+	    VCFLOAT="$1"
+	    shift
+	    ;;
+	(--image-size)
+	    IMAGE_SIZE="$1"
+	    shift
+	    ;;
+	(*)
+	    echo Invalid argument: "$arg"
+	    echo "$USAGE"
+	    exit 1
+	    ;;
+    esac
+done
+
+if [ -n "$IMAGE_SIZE" ]
+then
+    case "$IMAGE_SIZE" in
+	(small|medium|large)
+	    echo Image size: $IMAGE_SIZE
+	    cp sar_sizes/$IMAGE_SIZE/SARBounds.v sar/ &&
+	    [ -e sar_sizes/$IMAGE_SIZE/Main.vo ] && cp -t sar/ sar_sizes/$IMAGE_SIZE/*.vo && touch -r sar/SARBounds.v sar/*.vo &&
+	    rm -f sar/Main.vo
+	    ;;
+	(*)
+	    echo Invalid image size: expected 'small|medium|large'
+	    echo "$USAGE"
+	    exit 2
+    esac
+elif [ ! -e sar/SARBounds.v ]
+then
+    echo Unable to locate sar/SARBounds.v
+    echo Please specify --image-size '{ small|medium|large }'
+    echo as argument to $0
+    echo or manually create a file following the pattern
+    echo of some 'sar_sizes/*/SARBounds.v'
+    exit 1
+fi
+
+MOREOPTS=-no-native-compiler
+MAKEOPTS=
+for f in $MOREOPTS
+do
+    MAKEOPTS="$MAKEOPTS -arg $f"
+done
+
+OPTS=
+if . "$VCFLOAT/coqopts" && coqtop -batch $MOREOPTS $OPTS -require Clight2FPOpt -require ClightSep2
+then
+    true
+else
+    if [ -z "$VCFLOAT" ]
+    then
+	echo Please specify --vcfloat '<path-to-absolute-VCFloat-root>'
+	echo "$USAGE"
+    else
+	echo Unable to find VCFloat. Please compile it first.
+    fi
+    exit 3
+fi
+
+LIBS="sar"
+
+FILES=
+FULLOPTS="$OPTS"
+for f in $LIBS
+do
+ OPTS="$OPTS -R $f $f"
+ FULLOPTS="$FULLOPTS -R $PWD/$f $f"
+ FILES="$FILES $f/*.v"
+done
+
+cat > coqopts <<EOF
+OPTS="\$OPTS $FULLOPTS"
+EOF
+
+coq_makefile -o Makefile $MAKEOPTS $OPTS $FILES
+
+cat > run-coqide.sh <<EOF
+#!/bin/bash
+coqide $MOREOPTS $OPTS \$*
+EOF
+chmod +x run-coqide.sh
+
+rm -f dir-locals
+cp $VCFLOAT/dir-locals .
+
+for f in $LIBS
+do
+    echo "(\"$PWD/$f\" \"$f\")" >> dir-locals
+done
+
+for f in $LIBS
+do
+    {
+	echo "((nil . ((coq-load-path . ("
+	cat dir-locals
+	echo ")))))"
+    } > $f/.dir-locals.el
+done

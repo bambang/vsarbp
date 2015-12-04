@@ -1,0 +1,11 @@
+dir-locals
+Makefile
+*.aux
+.dir-locals.el
+*.glob
+*.v.d
+*.vo
+run-coqide.sh
+*~
+coqopts
+sar/SARBounds.v
